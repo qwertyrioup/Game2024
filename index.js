@@ -36,7 +36,7 @@ let lastUserConnectTime = null;
 let cleanupTimer = null;
 let rooms = [];
 let botAdditionInterval;
-const botAwaitTime = 5000
+const botAwaitTime = 2000;
 
 // Color and type mappings
 const colorMapping = ["blue", "red", "green", "yellow"];
@@ -81,51 +81,51 @@ io.use((socket, next) => {
 });
 
 io.on("connection", (socket) => {
-    lastUserConnectTime = Date.now();
-  
-    const userIndex = userQueue.length % colorMapping.length;
-    const color = colorMapping[userIndex];
-    const type = typeMapping[userIndex];
-  
-    const pieces = [];
-    for (let i = 1; i <= 4; i++) {
-      pieces.push({ name: `${color}${i}`, state: "locked", position: null });
-    }
-    userQueue.push({
-      username: socket.decoded.username,
-      balance: socket.decoded.balance,
-      role: socket.decoded.role,
-      type,
-      color,
-      socket,
-      pieces,
-      dice: 6
-    });
-  
-    // Check if at least one user is connected
-    if (userQueue.length === 1) {
-      // Start a timer to wait for 30 seconds for another user to join
-      setTimeout(() => {
-        // Check if there are still less than 4 users after 30 seconds
-        if (userQueue.length < 4) {
-          // Add a bot
-          addBots();
-        } else {
-          // Start the game if there are 4 users
-          startGame();
-        }
-      }, botAwaitTime);
-    }
-  
-    // Check if there are four users connected
-    if (userQueue.length === 4) {
-      // Clear the bot addition interval
-      clearInterval(botAdditionInterval);
-  
-      // Start the game
-      startGame();
-    }
+  lastUserConnectTime = Date.now();
+
+  const userIndex = userQueue.length % colorMapping.length;
+  const color = colorMapping[userIndex];
+  const type = typeMapping[userIndex];
+
+  const pieces = [];
+  for (let i = 1; i <= 4; i++) {
+    pieces.push({ name: `${color}${i}`, state: "locked", position: null });
+  }
+  userQueue.push({
+    username: socket.decoded.username,
+    balance: socket.decoded.balance,
+    role: socket.decoded.role,
+    type,
+    color,
+    socket,
+    pieces,
+    dice: 6,
   });
+
+  // Check if at least one user is connected
+  if (userQueue.length === 1) {
+    // Start a timer to wait for 30 seconds for another user to join
+    setTimeout(() => {
+      // Check if there are still less than 4 users after 30 seconds
+      if (userQueue.length < 4) {
+        // Add a bot
+        addBots();
+      } else {
+        // Start the game if there are 4 users
+        startGame();
+      }
+    }, botAwaitTime);
+  }
+
+  // Check if there are four users connected
+  if (userQueue.length === 4) {
+    // Clear the bot addition interval
+    clearInterval(botAdditionInterval);
+
+    // Start the game
+    startGame();
+  }
+});
 
 // Function to add bots to the queue
 function addBots() {
@@ -146,30 +146,30 @@ function addBots() {
       color: botColor,
       socket: null,
       pieces: botPieces,
-      dice: 6
+      dice: 6,
     });
     // console.log("bot added");
     if (userQueue.length < 4) {
-        // Start a timer to wait for another 30 seconds
-        setTimeout(() => {
-          // Check if there are still less than 4 players after 30 seconds
-          if (userQueue.length < 4) {
-            // Add another bot
-            addBots();
-          } else {
-            // Start the game if there are 4 players
-            startGame();
-          }
-        }, botAwaitTime);
-      } else {
-        // Start the game if there are 4 players
-        startGame();
-      }
+      // Start a timer to wait for another 30 seconds
+      setTimeout(() => {
+        // Check if there are still less than 4 players after 30 seconds
+        if (userQueue.length < 4) {
+          // Add another bot
+          addBots();
+        } else {
+          // Start the game if there are 4 players
+          startGame();
+        }
+      }, botAwaitTime);
+    } else {
+      // Start the game if there are 4 players
+      startGame();
     }
+  }
 }
 
 function startGame() {
-//   console.log("userQueue", userQueue);
+  //   console.log("userQueue", userQueue);
   // Sort userQueue based on color order
   userQueue.sort((a, b) => {
     return colorMapping.indexOf(a.color) - colorMapping.indexOf(b.color);
@@ -190,12 +190,12 @@ function startGame() {
     balance: player?.balance,
     pieces: player.pieces,
     dice: player.dice,
-    // socket: player?.socket
   }));
-  const generatedRoom = { roomId, players }
+  const generatedRoom = { roomId, players };
   rooms.push(generatedRoom);
   userQueue.forEach((player) => {
     if (player.type !== "bot") {
+      player.socket.join(roomId); // Each player joins a room identified by roomId
       player.socket.emit("game-start", generatedRoom);
     }
   });
@@ -203,39 +203,39 @@ function startGame() {
   // Clear userQueue
   userQueue = [];
 
-
   // Start the turn loop
   startTurnLoop(generatedRoom);
 }
 
 function startTurnLoop(room) {
-    // Start the turn loop
-    setInterval(() => {
-      // Get the next player's color
+  // Start the turn loop
+  setInterval(() => {
+    // Get the next player's color
+    const nextPlayer = room.players[0];
 
-      const nextPlayer = room.players[0];
-  
-      // Roll the dice for the next player
-      nextPlayer.dice = Math.floor(Math.random() * 6) + 1;
-  
-      // Emit turn start event with player's color and dice result, but only for real players
+    // Roll the dice for the next player
+    nextPlayer.dice = Math.floor(Math.random() * 6) + 1;
 
-    //   room.players.forEach((player) => {
-    //     player.socket.emit("game-update", {
-    //       playerColor: nextPlayer.color,
-    //       diceResult: nextPlayer.dice,
-    //     });
-    //   });
-  
-      // Rotate the player queue
-      room.players.push(room.players.shift());
-  
-      // Emit updated room object to all users
-      io.emit("update room", room);
-      console.log('emitted');
-    }, 2000); // Roll dice every 10 seconds
-  }
-  
+    // io.emit("game-update", {
+    //   playerColor: nextPlayer.color,
+    //   diceResult: nextPlayer.dice,
+    // });
+    // Emit turn start event with player's color and dice result, but only for real players
+
+    io.to(room.roomId).emit("game-update", {
+        playerColor: nextPlayer.username,
+        diceResult: nextPlayer.dice,
+      });
+    // Rotate the player queue
+    room.players.push(room.players.shift());
+
+    io.to(room.roomId).emit("update room", room);
+
+    // Emit updated room object to all users
+    // io.emit("update room", room);
+    console.log("emitted");
+  }, 2000); // Roll dice every 10 seconds
+}
 
 // Function to check and clear states if no user connects for 1 minute
 function checkAndClearStates() {
