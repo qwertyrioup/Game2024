@@ -189,43 +189,53 @@ function startGame() {
     type: player.type,
     balance: player?.balance,
     pieces: player.pieces,
-    dice: player.dice
+    dice: player.dice,
+    // socket: player?.socket
   }));
-  rooms.push({ roomId, players });
+  const generatedRoom = { roomId, players }
+  rooms.push(generatedRoom);
   userQueue.forEach((player) => {
     if (player.type !== "bot") {
-      player.socket.emit("game-start", {
-        roomId,
-        players,
-        // pieces: player.pieces,
-      });
+      player.socket.emit("game-start", generatedRoom);
     }
   });
 
   // Clear userQueue
   userQueue = [];
-  console.log('rooms: ', rooms)
+
 
   // Start the turn loop
-//   startTurnLoop();
+  startTurnLoop(generatedRoom);
 }
 
-function startTurnLoop() {
-  // Start the turn loop
-  setInterval(() => {
-    // Get the next player's color
-    const nextPlayerColor = getNextPlayerColor();
+function startTurnLoop(room) {
+    // Start the turn loop
+    setInterval(() => {
+      // Get the next player's color
 
-    // Roll the dice for the next player
-    const diceResult = rollDice();
+      const nextPlayer = room.players[0];
+  
+      // Roll the dice for the next player
+      nextPlayer.dice = Math.floor(Math.random() * 6) + 1;
+  
+      // Emit turn start event with player's color and dice result, but only for real players
 
-    // Emit turn start event with player's color and dice result
-    io.to(nextPlayerColor).emit("turn start", {
-      playerColor: nextPlayerColor,
-      diceResult,
-    });
-  }, 30000); // Assuming 30 seconds per turn
-}
+    //   room.players.forEach((player) => {
+    //     player.socket.emit("game-update", {
+    //       playerColor: nextPlayer.color,
+    //       diceResult: nextPlayer.dice,
+    //     });
+    //   });
+  
+      // Rotate the player queue
+      room.players.push(room.players.shift());
+  
+      // Emit updated room object to all users
+      io.emit("update room", room);
+      console.log('emitted');
+    }, 2000); // Roll dice every 10 seconds
+  }
+  
 
 // Function to check and clear states if no user connects for 1 minute
 function checkAndClearStates() {
