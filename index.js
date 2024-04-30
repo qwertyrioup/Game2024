@@ -45,25 +45,6 @@ const typeMapping = ["real", "real", "real", "real"]; // Assuming all users are 
 // Variable to keep track of the current turn index
 let currentTurnIndex = 0;
 
-// Function to get the next player's color and increment the turn index
-function getNextPlayerColor() {
-  const playerColors = ["blue", "red", "green", "yellow"];
-  const nextColor = playerColors[currentTurnIndex];
-  currentTurnIndex = (currentTurnIndex + 1) % playerColors.length; // Loop back to 0 if reached the end
-  return nextColor;
-}
-
-// Function to roll a dice and return the turn player's color and a random number between 1 and 6
-function rollDice() {
-  // Get the current turn player
-  const currentPlayer = userQueue[0]; // Assuming userQueue contains players in the current turn order
-
-  // Generate a random number between 1 and 6
-  const randomNumber = Math.floor(Math.random() * 6) + 1;
-
-  return { color: currentPlayer.color, number: randomNumber };
-}
-
 // Middleware function to authenticate socket connections
 io.use((socket, next) => {
   const accessToken = socket.handshake.headers.authorization;
@@ -72,7 +53,7 @@ io.use((socket, next) => {
     const token = accessToken.split(" ")[1]; // Split "Bearer token" and take the token part
     jwt.verify(token, process.env.JWT_SEC, (err, decoded) => {
       if (err) return next(new Error("Authentication error"));
-      socket.decoded = decoded;
+      socket.user = decoded;
       next();
     });
   } else {
@@ -92,9 +73,9 @@ io.on("connection", (socket) => {
     pieces.push({ name: `${color}${i}`, state: "locked", position: null });
   }
   userQueue.push({
-    username: socket.decoded.username,
-    balance: socket.decoded.balance,
-    role: socket.decoded.role,
+    username: socket.user.username,
+    balance: socket.user.balance,
+    role: socket.user.role,
     type,
     color,
     socket,
@@ -112,7 +93,7 @@ io.on("connection", (socket) => {
         addBots();
       } else {
         // Start the game if there are 4 users
-        startGame();
+        startGame(socket);
       }
     }, botAwaitTime);
   }
@@ -123,121 +104,166 @@ io.on("connection", (socket) => {
     clearInterval(botAdditionInterval);
 
     // Start the game
-    startGame();
+    startGame(socket);
+  }
+
+  // Function to add bots to the queue
+  function addBots() {
+    if (userQueue.length < 4) {
+      const botColor = colorMapping[userQueue.length];
+      const botPieces = [];
+      for (let j = 1; j <= 4; j++) {
+        botPieces.push({
+          name: `${botColor}${j}`,
+          state: "locked",
+          position: null,
+        });
+      }
+
+      userQueue.push({
+        username: `Bot-${userQueue.length}`,
+        type: "bot",
+        color: botColor,
+        socket: null,
+        pieces: botPieces,
+        dice: 6,
+      });
+      // console.log("bot added");
+      if (userQueue.length < 4) {
+        // Start a timer to wait for another 30 seconds
+        setTimeout(() => {
+          // Check if there are still less than 4 players after 30 seconds
+          if (userQueue.length < 4) {
+            // Add another bot
+            addBots();
+          } else {
+            // Start the game if there are 4 players
+            startGame(socket);
+          }
+        }, botAwaitTime);
+      } else {
+        // Start the game if there are 4 players
+        startGame(socket);
+      }
+    }
+  }
+
+  function startGame(socket) {
+    //   console.log("userQueue", userQueue);
+    // Sort userQueue based on color order
+    userQueue.sort((a, b) => {
+      return colorMapping.indexOf(a.color) - colorMapping.indexOf(b.color);
+    });
+
+    // Assign turns based on color order
+    userQueue.forEach((player, index) => {
+      player.turn = index + 1;
+    });
+
+    // Emit game start event to all players
+    const roomId = uuid();
+    const players = userQueue.map((player) => ({
+      username: player.username,
+      color: player.color,
+      turn: player.turn,
+      type: player.type,
+      balance: player?.balance,
+      pieces: player.pieces,
+      dice: player.dice,
+      // socket
+    }));
+    const generatedRoom = { roomId, players };
+    rooms.push(generatedRoom);
+    userQueue.forEach((player) => {
+      if (player.type !== "bot") {
+        player.socket.join(roomId); // Each player joins a room identified by roomId
+        player.socket.emit("game-start", generatedRoom);
+      }
+    });
+
+    // Clear userQueue
+    userQueue = [];
+
+    // Start the turn loop
+    startTurnLoop(generatedRoom, socket);
+  }
+
+  function startTurnLoop(room, socket) {
+    // Start the turn loop
+    function handleNextTurn(socket) {
+      if (room.players.length === 0) {
+        console.log("No players left in the room.");
+        return; // Exit if no players are in the room
+      }
+
+      // Get the current player
+      const currentPlayer = room.players[0];
+
+      io.to(room.roomId).emit("turn", {
+        color: currentPlayer.color,
+      });
+      // console.log(`It's now ${currentPlayer.username}'s turn.`);
+      // Set a timeout for player action
+      const actionTimeout = setTimeout(() => {
+        // console.log(`No action from ${currentPlayer.username}, rolling the dice automatically.`);
+        // If no action is taken, roll the dice automatically
+        const rolledDice = Math.floor(Math.random() * 6) + 1;
+        currentPlayer.dice = rolledDice;
+
+        // Emit event with dice result
+        io.to(room.roomId).emit("dice", {
+          dice: rolledDice,
+        });
+
+        // Rotate to next player
+        passTurnToNextPlayer(socket);
+      }, 15000); // 15 seconds timeout
+      // Setup listener for player action
+
+      socket.on("player-action", (actionData) => {
+        if (currentPlayer.color === actionData.color && actionData.action === "roll") {
+          clearTimeout(actionTimeout); // Clear the action timeout
+          handlePlayerAction(currentPlayer, socket);
+
+          console.log('logic works')
+        } else {
+          console.log("Not your turn.");
+        }
+      });
+    }
+
+
+
+
+
+    
+    function passTurnToNextPlayer(socket) {
+      // Move to the next player
+      // room.currentTurnIndex = (room.currentTurnIndex + 1) % room.players.length;
+      room.players.push(room.players.shift());
+      handleNextTurn(socket); // Call the next turn
+    }
+
+    function handlePlayerAction(player, socket) {
+      
+        const rolledDice = Math.floor(Math.random() * 6) + 1;
+        player.dice = rolledDice;
+        io.to(room.roomId).emit("dice", {
+          dice: rolledDice,
+        });
+        passTurnToNextPlayer(socket);
+      
+    
+      // Emit updated room object to all users
+      io.to(room.roomId).emit("update-room", room);
+    }
+    
+
+    // Start the first turn
+    handleNextTurn(socket);
   }
 });
 
-// Function to add bots to the queue
-function addBots() {
-  if (userQueue.length < 4) {
-    const botColor = colorMapping[userQueue.length];
-    const botPieces = [];
-    for (let j = 1; j <= 4; j++) {
-      botPieces.push({
-        name: `${botColor}${j}`,
-        state: "locked",
-        position: null,
-      });
-    }
-
-    userQueue.push({
-      username: `Bot-${userQueue.length}`,
-      type: "bot",
-      color: botColor,
-      socket: null,
-      pieces: botPieces,
-      dice: 6,
-    });
-    // console.log("bot added");
-    if (userQueue.length < 4) {
-      // Start a timer to wait for another 30 seconds
-      setTimeout(() => {
-        // Check if there are still less than 4 players after 30 seconds
-        if (userQueue.length < 4) {
-          // Add another bot
-          addBots();
-        } else {
-          // Start the game if there are 4 players
-          startGame();
-        }
-      }, botAwaitTime);
-    } else {
-      // Start the game if there are 4 players
-      startGame();
-    }
-  }
-}
-
-function startGame() {
-  //   console.log("userQueue", userQueue);
-  // Sort userQueue based on color order
-  userQueue.sort((a, b) => {
-    return colorMapping.indexOf(a.color) - colorMapping.indexOf(b.color);
-  });
-
-  // Assign turns based on color order
-  userQueue.forEach((player, index) => {
-    player.turn = index + 1;
-  });
-
-  // Emit game start event to all players
-  const roomId = uuid();
-  const players = userQueue.map((player) => ({
-    username: player.username,
-    color: player.color,
-    turn: player.turn,
-    type: player.type,
-    balance: player?.balance,
-    pieces: player.pieces,
-    dice: player.dice,
-  }));
-  const generatedRoom = { roomId, players };
-  rooms.push(generatedRoom);
-  userQueue.forEach((player) => {
-    if (player.type !== "bot") {
-      player.socket.join(roomId); // Each player joins a room identified by roomId
-      player.socket.emit("game-start", generatedRoom);
-    }
-  });
-
-  // Clear userQueue
-  userQueue = [];
-
-  // Start the turn loop
-  startTurnLoop(generatedRoom);
-}
-
-function startTurnLoop(room) {
-  // Start the turn loop
-  setInterval(() => {
-    // Get the next player's color
-    const nextPlayer = room.players[0];
-
-    // Roll the dice for the next player
-    nextPlayer.dice = Math.floor(Math.random() * 6) + 1;
-
-    // io.emit("game-update", {
-    //   playerColor: nextPlayer.color,
-    //   diceResult: nextPlayer.dice,
-    // });
-    // Emit turn start event with player's color and dice result, but only for real players
-
-    io.to(room.roomId).emit("game-update", {
-        playerColor: nextPlayer.username,
-        diceResult: nextPlayer.dice,
-      });
-    // Rotate the player queue
-    room.players.push(room.players.shift());
-
-    io.to(room.roomId).emit("update room", room);
-
-    // Emit updated room object to all users
-    // io.emit("update room", room);
-    console.log("emitted");
-  }, 2000); // Roll dice every 10 seconds
-}
-
-// Function to check and clear states if no user connects for 1 minute
 function checkAndClearStates() {
   const currentTime = Date.now();
   if (currentTime - lastUserConnectTime >= 60000) {
@@ -256,6 +282,6 @@ const PORT = process.env.PORT || 9000;
 
 httpServer.listen(process.env.PORT, () => {
   MongoDbConnection();
-
   console.log("Server started on Port", process.env.PORT);
+  checkAndClearStates();
 });

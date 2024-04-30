@@ -42,7 +42,8 @@ export const signin = async (req, res, next) => {
       {
         id: user._id,
         role: user.role,
-        balance: user.balance,
+        username: user.username,
+        balance: user.balance
       },
       process.env.JWT_SEC,
       { expiresIn: "3h" }
