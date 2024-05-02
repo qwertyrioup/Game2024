@@ -42,8 +42,7 @@ const botAwaitTime = 2000;
 const colorMapping = ["blue", "red", "green", "yellow"];
 const typeMapping = ["real", "real", "real", "real"]; // Assuming all users are real by default
 
-// Variable to keep track of the current turn index
-let currentTurnIndex = 0;
+
 
 // Middleware function to authenticate socket connections
 io.use((socket, next) => {
@@ -54,6 +53,7 @@ io.use((socket, next) => {
     jwt.verify(token, process.env.JWT_SEC, (err, decoded) => {
       if (err) return next(new Error("Authentication error"));
       socket.user = decoded;
+      console.log('decoded: ', decoded)
       next();
     });
   } else {
@@ -76,6 +76,7 @@ io.on("connection", (socket) => {
     username: socket.user.username,
     balance: socket.user.balance,
     role: socket.user.role,
+    level: socket.user.level,
     type,
     color,
     socket,
@@ -101,7 +102,7 @@ io.on("connection", (socket) => {
   // Check if there are four users connected
   if (userQueue.length === 4) {
     // Clear the bot addition interval
-    clearInterval(botAdditionInterval);
+    // clearInterval(botAdditionInterval);
 
     // Start the game
     startGame(socket);
@@ -168,6 +169,7 @@ io.on("connection", (socket) => {
       turn: player.turn,
       type: player.type,
       balance: player?.balance,
+      level: player?.level,
       pieces: player.pieces,
       dice: player.dice,
       // socket
@@ -210,7 +212,7 @@ io.on("connection", (socket) => {
         color: currentPlayer.color,
       });
 
-      console.log("works");
+      // console.log("works");
       // console.log(`It's now ${currentPlayer.username}'s turn.`);
       // Set a timeout for player action
       actionTimeout = setTimeout(() => {
@@ -238,7 +240,7 @@ io.on("connection", (socket) => {
         clearTimeout(actionTimeout); // Clear the action timeout
         handlePlayerAction(currentPlayer, socket);
 
-        console.log("logic works");
+        console.log("Rolled !");
       } else {
         console.log("Not your turn.");
       }
@@ -286,7 +288,7 @@ function checkAndClearStates() {
 // Start the server
 const PORT = process.env.PORT || 9000;
 
-httpServer.listen(process.env.PORT, () => {
+httpServer.listen(PORT, () => {
   MongoDbConnection();
   console.log("Server started on Port", process.env.PORT);
   checkAndClearStates();

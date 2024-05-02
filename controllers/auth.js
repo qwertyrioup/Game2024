@@ -16,7 +16,8 @@ export const createAccount = async (req, res, next) => {
         id: savedUser._id,
         role: savedUser.role,
         username: savedUser.username,
-        balance:savedUser.balance
+        balance:savedUser.balance,
+        level: savedUser.level
       },
       process.env.JWT_SEC,
       { expiresIn: "3h" }
@@ -43,7 +44,8 @@ export const signin = async (req, res, next) => {
         id: user._id,
         role: user.role,
         username: user.username,
-        balance: user.balance
+        balance: user.balance,
+        level: user.level
       },
       process.env.JWT_SEC,
       { expiresIn: "3h" }
