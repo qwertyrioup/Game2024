@@ -191,6 +191,10 @@ io.on("connection", (socket) => {
   function startTurnLoop(room, socket) {
     // Start the turn loop
     function handleNextTurn(socket) {
+
+
+
+
       if (room.players.length === 0) {
         console.log("No players left in the room.");
         return; // Exit if no players are in the room
@@ -202,6 +206,8 @@ io.on("connection", (socket) => {
       io.to(room.roomId).emit("turn", {
         color: currentPlayer.color,
       });
+
+      console.log("works");
       // console.log(`It's now ${currentPlayer.username}'s turn.`);
       // Set a timeout for player action
       const actionTimeout = setTimeout(() => {
