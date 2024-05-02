@@ -34,10 +34,8 @@ app.use("/api/auth", authRoutes);
 const connectedUsers = new Map();
 const runningGames = new Map();
 
-let userQueue = [];
 let lastUserConnectTime = null;
 let cleanupTimer = null;
-let rooms = [];
 const levels = {
   bronze: [],
   silver: [],
@@ -51,8 +49,6 @@ const movePieceAwaitingTime = 5000;
 
 // Color and type mappings
 const colorMapping = ["blue", "red", "green", "yellow"];
-const typeMapping = ["real", "real", "real", "real"]; // Assuming all users are real by default
-
 // Middleware function to authenticate socket connections
 io.use((socket, next) => {
   const accessToken = socket.handshake.headers.authorization;
@@ -113,29 +109,29 @@ function setupUserLevel(userId, connectedUsers, levels, runningGames) {
   switch (level) {
     case "bronze":
       pushToLevel(id, levels.bronze);
-      userSocket.emit(
-        "status",
-        `actual connected users ${levels.bronze.length}`
-      );
+      // userSocket.emit(
+      //   "status",
+      //   `actual connected users ${levels.bronze.length}`
+      // );
 
       break;
     case "silver":
       pushToLevel(id, levels.silver);
-      userSocket.emit(
-        "status",
-        `actual connected users ${levels.silver.length}`
-      );
+      // userSocket.emit(
+      //   "status",
+      //   `actual connected users ${levels.silver.length}`
+      // );
       break;
     case "gold":
       pushToLevel(id, levels.gold);
-      userSocket.emit("status", `actual connected users ${levels.gold.length}`);
+      // userSocket.emit("status", `actual connected users ${levels.gold.length}`);
       break;
     case "diamond":
       pushToLevel(id, levels.diamond);
-      userSocket.emit(
-        "status",
-        `actual connected users ${levels.diamond.length}`
-      );
+      // userSocket.emit(
+      //   "status",
+      //   `actual connected users ${levels.diamond.length}`
+      // );
 
       break;
     default:
@@ -166,7 +162,7 @@ function findGame(userId, levels, runningGames) {
         }
 
         // Emit status to connected users
-        userSocket.emit("status", `actual connected users ${players.length}`);
+        // userSocket.emit("status", `actual connected users ${players.length}`);
 
         // Launch the game if there are 4 players (including bots)
         if (players.length === 4) {
@@ -251,21 +247,26 @@ function startGame(userId, room) {
     dice: 6,
   });
 
-  setTimeout(() => {
-    userSocket.emit("status", "generating room.");
-  }, 2500);
-  setTimeout(() => {
-    userSocket.emit("status", "room generated.");
-  }, 5000);
-  setTimeout(() => {
-    userSocket.emit("status", "game starting in 5s.");
-    targetRoom = runningGames.get(roomId);
-  }, 7500);
-  setTimeout(() => {
-    userSocket.emit("status", "game started.");
-    userSocket.emit("game", targetRoom);
-    playGame(userId, roomId);
-  }, 12500);
+
+  targetRoom = runningGames.get(roomId);
+  userSocket.emit("game", targetRoom);
+  playGame(userId, roomId);
+
+  // setTimeout(() => {
+  //   userSocket.emit("status", "generating room.");
+  // }, 2500);
+  // setTimeout(() => {
+  //   userSocket.emit("status", "room generated.");
+  // }, 5000);
+  // setTimeout(() => {
+  //   userSocket.emit("status", "game starting in 5s.");
+  //   targetRoom = runningGames.get(roomId);
+  // }, 7500);
+  // setTimeout(() => {
+  //   userSocket.emit("status", "game started.");
+  //   userSocket.emit("game", targetRoom);
+  //   playGame(userId, roomId);
+  // }, 12500);
 }
 
 function pushToLevel(id, array) {
@@ -288,7 +289,6 @@ function checkAndClearStates() {
   const currentTime = Date.now();
   if (currentTime - lastUserConnectTime >= 60000) {
     console.log("No users connected for 1 minute. Clearing states.");
-    userQueue = [];
     lastUserConnectTime = null;
     clearTimeout(cleanupTimer);
     cleanupTimer = null;
@@ -300,13 +300,20 @@ function checkAndClearStates() {
 function playGame(userId, roomId) {
   const room = runningGames.get(roomId);
   const userSocket = connectedUsers.get(userId);
-  const playerIds = room.players
-    .map((player) => {
-      if (player.type === "real") {
-        return player.id;
-      }
-    })
-    .filter((playerId) => playerId !== undefined);
+  let canRollDice = false
+  // const playerIds = room.players
+  //   .map((player) => {
+  //     if (player.type === "real") {
+  //       return player.id;
+  //     }
+  //   })
+  //   .filter((playerId) => playerId !== undefined);
+
+  //   playerIds.forEach((playerId) => {
+  //     const playerSocket = connectedUsers.get(playerId)
+  //     playerSocket.join(roomId)
+
+    // })
 
   let currentIndex = 0;
   let actionTimeout;
@@ -322,23 +329,22 @@ function playGame(userId, roomId) {
 
   function playTurn() {
     const currentPlayer = room.players[currentIndex];
-    console.log(`It's ${currentPlayer.username}'s turn.`);
+    // console.log(`It's ${currentPlayer.username}'s turn.`);
     setTimeout(() => {
-      playerIds.forEach((id) => {
-        const userSocket = connectedUsers.get(id);
+   
         userSocket.emit("turn", currentPlayer.color);
-      });
+        canRollDice = true
+     
     }, movePieceAwaitingTime);
 
     // Set timeout for player action
     actionTimeout = setTimeout(() => {
       generatedDice = rollDice();
-      playerIds.forEach((id) => {
-        const userSocket = connectedUsers.get(id);
-        userSocket.emit("dice", generatedDice);
-        // userSocket.emit('turn', currentPlayer.color);
-      });
+      
       currentIndex = (currentIndex + 1) % room.players.length;
+      userSocket.emit("dice", generatedDice);
+      canRollDice = false;
+ 
       playTurn(); // Proceed to the next turn
     }, rollingDiceAwaitTime * 2);
 
@@ -347,16 +353,13 @@ function playGame(userId, roomId) {
       // If player action is 'roll' and it's the current player's turn
       if (
         actionData.action === "roll" &&
-        actionData.color === currentPlayer.color
+        actionData.color === currentPlayer.color && canRollDice
       ) {
         clearTimeout(actionTimeout);
         generatedDice = rollDice();
-        playerIds.forEach((id) => {
-          const userSocket = connectedUsers.get(id);
-          userSocket.emit("dice", generatedDice);
-          // userSocket.emit('turn', currentPlayer.color);
-        });
         currentIndex = (currentIndex + 1) % room.players.length;
+        userSocket.emit("dice", generatedDice);
+        canRollDice = false
         playTurn(); // Proceed to the next turn
       } else {
         console.log("Not your turn or invalid action.");
