@@ -189,6 +189,9 @@ io.on("connection", (socket) => {
   }
 
   function startTurnLoop(room, socket) {
+    let actionTimeout;
+    let currentPlayer;
+
     // Start the turn loop
     function handleNextTurn(socket) {
 
@@ -201,7 +204,7 @@ io.on("connection", (socket) => {
       }
 
       // Get the current player
-      const currentPlayer = room.players[0];
+      currentPlayer = room.players[0]; // Assign currentPlayer here
 
       io.to(room.roomId).emit("turn", {
         color: currentPlayer.color,
@@ -210,7 +213,7 @@ io.on("connection", (socket) => {
       console.log("works");
       // console.log(`It's now ${currentPlayer.username}'s turn.`);
       // Set a timeout for player action
-      const actionTimeout = setTimeout(() => {
+      actionTimeout = setTimeout(() => {
         // console.log(`No action from ${currentPlayer.username}, rolling the dice automatically.`);
         // If no action is taken, roll the dice automatically
         const rolledDice = Math.floor(Math.random() * 6) + 1;
@@ -224,25 +227,24 @@ io.on("connection", (socket) => {
         // Rotate to next player
         passTurnToNextPlayer(socket);
       }, 15000); // 15 seconds timeout
-      // Setup listener for player action
-
-      socket.on("player-action", (actionData) => {
-        if (currentPlayer.color === actionData.color && actionData.action === "roll") {
-          clearTimeout(actionTimeout); // Clear the action timeout
-          handlePlayerAction(currentPlayer, socket);
-
-          console.log('logic works')
-        } else {
-          console.log("Not your turn.");
-        }
-      });
     }
 
+    // Setup listener for player action outside of handleNextTurn
+    socket.on("player-action", (actionData) => {
+      if (
+        currentPlayer.color === actionData.color &&
+        actionData.action === "roll"
+      ) {
+        clearTimeout(actionTimeout); // Clear the action timeout
+        handlePlayerAction(currentPlayer, socket);
 
+        console.log("logic works");
+      } else {
+        console.log("Not your turn.");
+      }
+    });
 
-
-
-    
+    // Function to pass turn to the next player
     function passTurnToNextPlayer(socket) {
       // Move to the next player
       // room.currentTurnIndex = (room.currentTurnIndex + 1) % room.players.length;
@@ -250,22 +252,20 @@ io.on("connection", (socket) => {
       handleNextTurn(socket); // Call the next turn
     }
 
+    // Function to handle player action
     function handlePlayerAction(player, socket) {
-      
-        const rolledDice = Math.floor(Math.random() * 6) + 1;
-        player.dice = rolledDice;
-        io.to(room.roomId).emit("dice", {
-          dice: rolledDice,
-        });
-        passTurnToNextPlayer(socket);
-      
-    
+      const rolledDice = Math.floor(Math.random() * 6) + 1;
+      player.dice = rolledDice;
+      io.to(room.roomId).emit("dice", {
+        dice: rolledDice,
+      });
+      passTurnToNextPlayer(socket);
+
       // Emit updated room object to all users
       io.to(room.roomId).emit("update-room", room);
     }
-    
 
-    // Start the first turn
+    // Start the turn loop
     handleNextTurn(socket);
   }
 });
