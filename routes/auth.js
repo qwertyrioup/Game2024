@@ -7,7 +7,7 @@ const router = express.Router();
 // DASHBOARD
 
 router.post("/signin", signin);
-router.post("/createAccount", createAccount);
+router.post("/create-account", createAccount);
 
 //
 

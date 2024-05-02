@@ -6,6 +6,12 @@ const UserType = {
   SUPER: "super",
   SHOP: "shop",
 };
+const UserLevel = {
+  BRONZE: "bronze",
+  SILVER: "silver",
+  GOLD: "gold",
+  DIAMOND: "diamond",
+};
 
 const UserSchema = new mongoose.Schema(
   {
@@ -25,6 +31,12 @@ const UserSchema = new mongoose.Schema(
       enum: Object.values(UserType),
       required: true,
       default: UserType.CLIENT,
+    },
+    level: {
+      type: String,
+      enum: Object.values(UserLevel),
+      required: true,
+      default: UserLevel.BRONZE,
     },
     balance:{
       type: Number,

@@ -31,39 +31,24 @@ mongoose.set("strictQuery", false);
 app.use("/api/auth", authRoutes);
 
 // Queue for users waiting to join the game
-let userQueue = [];
+const connectedUsers = new Map();
+const runningGames = new Map();
+
 let lastUserConnectTime = null;
 let cleanupTimer = null;
-let rooms = [];
-let botAdditionInterval;
-const botAwaitTime = 2000;
+const levels = {
+  bronze: [],
+  silver: [],
+  gold: [],
+  diamond: [],
+};
+
+const botAwaitTime = 5000;
+const rollingDiceAwaitTime = 5000;
+const movePieceAwaitingTime = 5000;
 
 // Color and type mappings
 const colorMapping = ["blue", "red", "green", "yellow"];
-const typeMapping = ["real", "real", "real", "real"]; // Assuming all users are real by default
-
-// Variable to keep track of the current turn index
-let currentTurnIndex = 0;
-
-// Function to get the next player's color and increment the turn index
-function getNextPlayerColor() {
-  const playerColors = ["blue", "red", "green", "yellow"];
-  const nextColor = playerColors[currentTurnIndex];
-  currentTurnIndex = (currentTurnIndex + 1) % playerColors.length; // Loop back to 0 if reached the end
-  return nextColor;
-}
-
-// Function to roll a dice and return the turn player's color and a random number between 1 and 6
-function rollDice() {
-  // Get the current turn player
-  const currentPlayer = userQueue[0]; // Assuming userQueue contains players in the current turn order
-
-  // Generate a random number between 1 and 6
-  const randomNumber = Math.floor(Math.random() * 6) + 1;
-
-  return { color: currentPlayer.color, number: randomNumber };
-}
-
 // Middleware function to authenticate socket connections
 io.use((socket, next) => {
   const accessToken = socket.handshake.headers.authorization;
@@ -73,6 +58,7 @@ io.use((socket, next) => {
     jwt.verify(token, process.env.JWT_SEC, (err, decoded) => {
       if (err) return next(new Error("Authentication error"));
       socket.user = decoded;
+      connectedUsers.set(decoded.id, socket);
       next();
     });
   } else {
@@ -81,184 +67,257 @@ io.use((socket, next) => {
 });
 
 io.on("connection", (socket) => {
-  lastUserConnectTime = Date.now();
+  const myId = socket.user.id.toString();
+  console.log('new connection')
 
-  const userIndex = userQueue.length % colorMapping.length;
-  const color = colorMapping[userIndex];
-  const type = typeMapping[userIndex];
+  setupUserLevel(myId, connectedUsers, levels, runningGames);
 
-  const pieces = [];
-  for (let i = 1; i <= 4; i++) {
-    pieces.push({ name: `${color}${i}`, state: "locked", position: null });
-  }
-  userQueue.push({
-    username: socket.user.username,
-    balance: socket.user.balance,
-    role: socket.user.role,
-    type,
-    color,
-    socket,
-    pieces,
-    dice: 6,
+  findGame(myId, levels, runningGames);
+
+
+  socket.on("player-action", (actionObj) => {
+    const { action, color, id } = actionObj;
+
+    let foundRoom = runningGames.get(id)
+    if (foundRoom) {
+      const turn = foundRoom.turn
+      console.log('turn: ', turn)
+
+      if (action === "roll" && foundRoom && turn === "color") {
+        
+          const dice = rollDice();
+          const nextTurn = passTurn()
+          foundRoom.turn = nextTurn
+          console.log('foind', foundRoom)
+          runningGames.set(id, foundRoom)
+          io.to(id).emit("dice", dice); // Emit the dice roll result to the room
+          playGame(id, foundRoom)
+        } else {
+          // console.log("Invalid player or not player's turn.");
+        }
+    } else {
+      console.log('room not found')
+    }
+    
+
   });
 
-  // Check if at least one user is connected
-  if (userQueue.length === 1) {
-    // Start a timer to wait for 30 seconds for another user to join
-    setTimeout(() => {
-      // Check if there are still less than 4 users after 30 seconds
-      if (userQueue.length < 4) {
-        // Add a bot
-        addBots();
-      } else {
-        // Start the game if there are 4 users
-        startGame();
-      }
-    }, botAwaitTime);
-  }
-
-  // Check if there are four users connected
-  if (userQueue.length === 4) {
-    // Clear the bot addition interval
-    clearInterval(botAdditionInterval);
-
-    // Start the game
-    startGame();
-  }
+  socket.on("disconnect", () => {
+    if (socket.user) {
+      const { id, level } = socket.user;
+      removeLevelPlayer(id, level);
+      connectedUsers.delete(id);
+    }
+  });
 });
 
-// Function to add bots to the queue
-function addBots() {
-  if (userQueue.length < 4) {
-    const botColor = colorMapping[userQueue.length];
-    const botPieces = [];
-    for (let j = 1; j <= 4; j++) {
-      botPieces.push({
-        name: `${botColor}${j}`,
+
+
+
+
+
+
+function setupUserLevel(userId, connectedUsers, levels, runningGames) {
+  if (isPlayerInRunningGame(userId, runningGames)) {
+    return; // Exit if player is in a running game
+  }
+
+  const userSocket = connectedUsers.get(userId);
+
+  // Check if the user socket exists
+  if (!userSocket) {
+    console.error("User socket not found for ID:", userId);
+    return; // Exit if no user socket found
+  }
+
+  const user = userSocket.user;
+  if (!user) {
+    console.error("User data not found in socket for ID:", userId);
+    return; // Exit if user data is missing
+  }
+
+  const { level, username, id, balance } = user;
+
+  // Notify the user of successful connection
+
+  // Depending on the user's level, push to the appropriate level array and emit the updated level array to the user
+  switch (level) {
+    case "bronze":
+      pushToLevel(id, levels.bronze);
+      // userSocket.emit(
+      //   "status",
+      //   `actual connected users ${levels.bronze.length}`
+      // );
+
+      break;
+    case "silver":
+      pushToLevel(id, levels.silver);
+      // userSocket.emit(
+      //   "status",
+      //   `actual connected users ${levels.silver.length}`
+      // );
+      break;
+    case "gold":
+      pushToLevel(id, levels.gold);
+      // userSocket.emit("status", `actual connected users ${levels.gold.length}`);
+      break;
+    case "diamond":
+      pushToLevel(id, levels.diamond);
+      // userSocket.emit(
+      //   "status",
+      //   `actual connected users ${levels.diamond.length}`
+      // );
+
+      break;
+    default:
+      console.error("Unrecognized user level:", level);
+  }
+
+  // userSocket.emit("status", levels[level].length);
+}
+
+function findGame(userId, levels, runningGames) {
+  if (isPlayerInRunningGame(userId, runningGames)) {
+    return; // Exit if player is in a running game
+  }
+
+  let addingBotsInterval;
+  const userSocket = connectedUsers.get(userId);
+
+  for (const level in levels) {
+    const players = levels[level];
+
+    if (players.length >= 1 && players.length < 4) {
+      // Start waiting for players to join
+      addingBotsInterval = setInterval(() => {
+        // Check if any new players joined during the waiting time
+        if (players.length < 4) {
+          // Add a bot if no new players joined
+          players.push("bot");
+        }
+
+        // Emit status to connected users
+        // userSocket.emit("status", `actual connected users ${players.length}`);
+
+        // Launch the game if there are 4 players (including bots)
+        if (players.length === 4) {
+          clearInterval(addingBotsInterval);
+          launchGame(userId, players, level, levels, runningGames);
+        }
+      }, botAwaitTime);
+    }
+  }
+}
+
+function launchGame(userId, players, level, levels, runningGames) {
+  const roomId = uuid();
+  console.log('roomId', roomId)
+  const gamePlayers = players.slice(0, 4); // Take the first four players
+
+  // Remove these players from the level array
+  levels[level] = players.slice(4);
+
+  runningGames.set(roomId, { players: gamePlayers, level: level });
+
+  // Now you can start a game with these players
+  const gameRoom = { roomId, players: gamePlayers, level: level };
+
+  startGame(userId, gameRoom);
+}
+
+function isPlayerInRunningGame(playerToCheck, runningGames) {
+  for (const [roomId, game] of runningGames.entries()) {
+    for (const player of game.players) {
+      if (player.id === playerToCheck) {
+        console.log(
+          `${playerToCheck} is already in a running game with room ID ${roomId}`
+        );
+        return true; // Player is already in a running game
+      }
+    }
+  }
+  return false; // Player is not in any running game
+}
+
+function startGame(userId, room) {
+  const userSocket = connectedUsers.get(userId);
+  let targetRoom;
+  // Here you can implement your game logic
+  const { roomId, players, level } = room;
+  let botCounter = 1; // Counter to keep track of bot numbering
+
+  const generatedPlayers = players.map((player, index) => {
+    if (player.includes("bot")) {
+      const botName = `bot${botCounter++}`; // Increment bot counter for each bot encountered
+      return {
+        username: botName,
+        type: "bot",
+        color: colorMapping[index % colorMapping.length],
+      }; // Assign colors based on the color mapping
+    } else {
+      const connectedUser = connectedUsers.get(player);
+      return {
+        id: connectedUser.user.id,
+        username: connectedUser.user.username,
+        type: "real",
+        color: colorMapping[index % colorMapping.length],
+      };
+    }
+  });
+
+  const generatedPlayersWithPieces = generatedPlayers.map((player) => {
+    const pieces = [];
+    for (let i = 1; i <= 4; i++) {
+      pieces.push({
+        name: `${player.color}${i}`,
         state: "locked",
         position: null,
       });
     }
+    return { ...player, pieces };
+  });
 
-    userQueue.push({
-      username: `Bot-${userQueue.length}`,
-      type: "bot",
-      color: botColor,
-      socket: null,
-      pieces: botPieces,
-      dice: 6,
-    });
-    // console.log("bot added");
-    if (userQueue.length < 4) {
-      // Start a timer to wait for another 30 seconds
-      setTimeout(() => {
-        // Check if there are still less than 4 players after 30 seconds
-        if (userQueue.length < 4) {
-          // Add another bot
-          addBots();
-        } else {
-          // Start the game if there are 4 players
-          startGame();
-        }
-      }, botAwaitTime);
-    } else {
-      // Start the game if there are 4 players
-      startGame();
+  runningGames.set(roomId, {
+    players: generatedPlayersWithPieces,
+    level,
+    dice: 6,
+    turn: 'blue'
+  });
+
+
+  targetRoom = runningGames.get(roomId);
+  // userSocket.emit("game", targetRoom);
+  targetRoom.players.forEach((player) => {
+    if (player.type === 'real') {
+      const playerSocket = connectedUsers.get(player.id)
+      playerSocket.join(roomId)
+    }
+  })
+  console.log('game run')
+  playGame(roomId, targetRoom);
+
+}
+
+function pushToLevel(id, array) {
+  if (!array.includes(id)) {
+    array.push(id);
+  }
+}
+
+function removeLevelPlayer(id, level) {
+  const levelArray = levels[level];
+  if (levelArray) {
+    const index = levelArray.indexOf(id);
+    if (index > -1) {
+      levelArray.splice(index, 1);
     }
   }
 }
 
-function startGame(socket) {
-  //   console.log("userQueue", userQueue);
-  // Sort userQueue based on color order
-  userQueue.sort((a, b) => {
-    return colorMapping.indexOf(a.color) - colorMapping.indexOf(b.color);
-  });
-
-  // Assign turns based on color order
-  userQueue.forEach((player, index) => {
-    player.turn = index + 1;
-  });
-
-  // Emit game start event to all players
-  const roomId = uuid();
-  const players = userQueue.map((player) => ({
-    username: player.username,
-    color: player.color,
-    turn: player.turn,
-    type: player.type,
-    balance: player?.balance,
-    pieces: player.pieces,
-    dice: player.dice,
-    socket
-  }));
-  const generatedRoom = { roomId, players };
-  rooms.push(generatedRoom);
-  userQueue.forEach((player) => {
-    if (player.type !== "bot") {
-      player.socket.join(roomId); // Each player joins a room identified by roomId
-      player.socket.emit("game-start", generatedRoom);
-    }
-  });
-
-  // Clear userQueue
-  userQueue = [];
-
-  // Start the turn loop
-  startTurnLoop(generatedRoom);
-}
-
-function startTurnLoop(room) {
-  // Start the turn loop
-  const turnInterval = setInterval(() => {
-    // Get the next player's color
-    const nextPlayer = room.players[0];
-
-    // Emit event to start player's turn and wait for action
-    nextPlayer.socket.emit("start-turn");
-
-
-    // // Set a timeout for player action
-    // const actionTimeout = setTimeout(() => {
-    //   // If no action is taken within 15 seconds, automatically roll the dice
-    //   const rolledDice = Math.floor(Math.random() * 6) + 1;
-    //   nextPlayer.dice = rolledDice;
-
-    //   // Rotate the player queue
-    //   room.players.push(room.players.shift());
-
-    //   // Emit turn start event with player's color and dice result
-    //   io.to(room.roomId).emit("game-update", {
-    //     turn: nextPlayer.color,
-    //     dice: rolledDice,
-    //   });
-
-    //   // Emit updated room object to all users
-    //   io.to(room.roomId).emit("update-room", room);
-    // }, 15000); // 15 seconds timeout
-
-    // // Listen for player action
-    // nextPlayer.socket.on("player-action", (actionData) => {
-    //   clearTimeout(actionTimeout); // Clear the action timeout
-    //   // Process the player action here
-    //   // For example, if the action is moving a piece, update the game state accordingly
-
-    //   // Emit updated room object to all users
-    //   io.to(room.roomId).emit("update-room", room);
-    // });
-
-  }, 2000); // Roll dice every 2 seconds for demonstration, you can adjust this interval as needed
-}
-
-
-
-
-// Function to check and clear states if no user connects for 1 minute
 function checkAndClearStates() {
   const currentTime = Date.now();
   if (currentTime - lastUserConnectTime >= 60000) {
     console.log("No users connected for 1 minute. Clearing states.");
-    userQueue = [];
     lastUserConnectTime = null;
     clearTimeout(cleanupTimer);
     cleanupTimer = null;
@@ -267,11 +326,78 @@ function checkAndClearStates() {
   }
 }
 
+function passTurn(turn) {
+  let nextTurn
+  if (turn === 'blue') {
+    nextTurn = 'red'
+  }
+  else if(turn === 'red') {
+    nextTurn = 'green'
+    
+  }
+  else if(turn === 'green') {
+    nextTurn = 'yellow'
+
+  }
+  else if(turn === 'yellow') {
+    nextTurn = 'blue'
+
+  }
+  return nextTurn
+}
+
+
+
+
+
+
+
+function playGame(roomId, targetRoom) {
+  const room = targetRoom;
+
+  io.to(roomId).emit("status", "starting game");
+
+  function playTurn() {
+    const turn = room.turn; // Get the current player
+    const nextTurn = passTurn(turn)
+    io.to(roomId).emit("turn", turn); // Emit the turn event for the current player
+    
+    
+    setTimeout(()=> {
+      const dice = rollDice()
+      room.turn = nextTurn
+      runningGames.set(roomId, room)
+      io.to(roomId).emit("dice", dice); 
+    }, 10000)
+    
+    
+// Emit the turn event for the current player
+    setTimeout(playTurn, 10000); // Start the game loop
+  }
+
+  playTurn(); // Start the game loop
+}
+
+
+
+
+
+
+
+
+
+
+
+
+function rollDice() {
+  return Math.floor(Math.random() * 6) + 1;
+}
+
 // Start the server
 const PORT = process.env.PORT || 9000;
 
-httpServer.listen(process.env.PORT, () => {
+httpServer.listen(PORT, () => {
   MongoDbConnection();
   console.log("Server started on Port", process.env.PORT);
-  checkAndClearStates()
+  checkAndClearStates();
 });
