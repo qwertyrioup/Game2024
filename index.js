@@ -46,6 +46,8 @@ const levels = {
 const botAwaitTime = 5000;
 const rollingDiceAwaitTime = 5000;
 const movePieceAwaitingTime = 5000;
+let manualDice = false; // Flag to control dice emission during manual player action
+
 
 // Color and type mappings
 const colorMapping = ["blue", "red", "green", "yellow"];
@@ -68,10 +70,39 @@ io.use((socket, next) => {
 
 io.on("connection", (socket) => {
   const myId = socket.user.id.toString();
+  console.log("new connection");
 
   setupUserLevel(myId, connectedUsers, levels, runningGames);
 
   findGame(myId, levels, runningGames);
+
+
+  socket.on("player-action", (actionObj) => {
+      const { action, color, id } = actionObj;
+  
+      let foundRoom = runningGames.get(id);
+      if (foundRoom) {
+          const turn = foundRoom.turn;
+  
+          if (action === "roll" && foundRoom && turn === color) {
+              if (!foundRoom.turnProcessed) {
+                  const dice = rollDice();
+                  const nextTurn = passTurn(turn);
+                  foundRoom.turn = nextTurn;
+                  foundRoom.turnProcessed = true; // Mark the turn as processed
+                  io.to(id).emit("dice", dice); // Emit the dice roll result to the room
+                  runningGames.set(id, foundRoom);
+                  manualDice = true; // Set flag to indicate manual dice emission
+              } else {
+                  console.log("Turn already processed.");
+              }
+          } else {
+              // console.log("Invalid player or not player's turn.");
+          }
+      } else {
+          console.log("room not found");
+      }
+  });
 
   socket.on("disconnect", () => {
     if (socket.user) {
@@ -111,7 +142,7 @@ function setupUserLevel(userId, connectedUsers, levels, runningGames) {
       pushToLevel(id, levels.bronze);
       // userSocket.emit(
       //   "status",
-      //   `actual connected users ${levels.bronze.length}`
+      //   actual connected users ${levels.bronze.length}
       // );
 
       break;
@@ -119,18 +150,18 @@ function setupUserLevel(userId, connectedUsers, levels, runningGames) {
       pushToLevel(id, levels.silver);
       // userSocket.emit(
       //   "status",
-      //   `actual connected users ${levels.silver.length}`
+      //   actual connected users ${levels.silver.length}
       // );
       break;
     case "gold":
       pushToLevel(id, levels.gold);
-      // userSocket.emit("status", `actual connected users ${levels.gold.length}`);
+      // userSocket.emit("status", actual connected users ${levels.gold.length});
       break;
     case "diamond":
       pushToLevel(id, levels.diamond);
       // userSocket.emit(
       //   "status",
-      //   `actual connected users ${levels.diamond.length}`
+      //   actual connected users ${levels.diamond.length}
       // );
 
       break;
@@ -162,7 +193,7 @@ function findGame(userId, levels, runningGames) {
         }
 
         // Emit status to connected users
-        // userSocket.emit("status", `actual connected users ${players.length}`);
+        // userSocket.emit("status", actual connected users ${players.length});
 
         // Launch the game if there are 4 players (including bots)
         if (players.length === 4) {
@@ -176,6 +207,7 @@ function findGame(userId, levels, runningGames) {
 
 function launchGame(userId, players, level, levels, runningGames) {
   const roomId = uuid();
+  console.log("roomId", roomId);
   const gamePlayers = players.slice(0, 4); // Take the first four players
 
   // Remove these players from the level array
@@ -245,28 +277,20 @@ function startGame(userId, room) {
     players: generatedPlayersWithPieces,
     level,
     dice: 6,
+    turn: "blue",
+    turnProcessed: false,
   });
 
-
   targetRoom = runningGames.get(roomId);
-  userSocket.emit("game", targetRoom);
-  playGame(userId, roomId);
-
-  // setTimeout(() => {
-  //   userSocket.emit("status", "generating room.");
-  // }, 2500);
-  // setTimeout(() => {
-  //   userSocket.emit("status", "room generated.");
-  // }, 5000);
-  // setTimeout(() => {
-  //   userSocket.emit("status", "game starting in 5s.");
-  //   targetRoom = runningGames.get(roomId);
-  // }, 7500);
-  // setTimeout(() => {
-  //   userSocket.emit("status", "game started.");
-  //   userSocket.emit("game", targetRoom);
-  //   playGame(userId, roomId);
-  // }, 12500);
+  // userSocket.emit("game", targetRoom);
+  targetRoom.players.forEach((player) => {
+    if (player.type === "real") {
+      const playerSocket = connectedUsers.get(player.id);
+      playerSocket.join(roomId);
+    }
+  });
+  console.log("game run");
+  playGame(roomId, targetRoom);
 }
 
 function pushToLevel(id, array) {
@@ -297,77 +321,50 @@ function checkAndClearStates() {
   }
 }
 
-function playGame(userId, roomId) {
-  const room = runningGames.get(roomId);
-  const userSocket = connectedUsers.get(userId);
-  let canRollDice = false
-  // const playerIds = room.players
-  //   .map((player) => {
-  //     if (player.type === "real") {
-  //       return player.id;
-  //     }
-  //   })
-  //   .filter((playerId) => playerId !== undefined);
-
-  //   playerIds.forEach((playerId) => {
-  //     const playerSocket = connectedUsers.get(playerId)
-  //     playerSocket.join(roomId)
-
-    // })
-
-  let currentIndex = 0;
-  let actionTimeout;
-  let generatedDice;
-
-  function waitForPlayerAction(userSocket, currentPlayerColor) {
-    return new Promise((resolve) => {
-      userSocket.once("player-action", (actionData) => {
-        resolve(actionData);
-      });
-    });
+function passTurn(turn) {
+  let nextTurn;
+  if (turn === "blue") {
+    nextTurn = "red";
+  } else if (turn === "red") {
+    nextTurn = "green";
+  } else if (turn === "green") {
+    nextTurn = "yellow";
+  } else if (turn === "yellow") {
+    nextTurn = "blue";
   }
+  return nextTurn;
+}
+
+function playGame(roomId, targetRoom) {
+  const room = targetRoom;
+
+  io.to(roomId).emit("status", "starting game");
 
   function playTurn() {
-    const currentPlayer = room.players[currentIndex];
-    // console.log(`It's ${currentPlayer.username}'s turn.`);
-    setTimeout(() => {
-   
-        userSocket.emit("turn", currentPlayer.color);
-        canRollDice = true
-     
-    }, movePieceAwaitingTime);
+      const turn = room.turn; // Get the current player
+      const nextTurn = passTurn(turn);
+      io.to(roomId).emit("turn", turn); // Emit the turn event for the current player
+      console.log("turn", turn);
+      console.log("nextTurn", nextTurn);
+      setTimeout(() => {
+          if (!manualDice) { // Check if manual dice emission is not flagged
+              const dice = rollDice();
+              room.turn = nextTurn;
+              room.turnProcessed = false;
+              runningGames.set(roomId, room);
+              io.to(roomId).emit("dice", dice);
+              console.log("auto dice", dice);
+          }
+          manualDice = false; // Reset flag after using it
+      }, 10000);
 
-    // Set timeout for player action
-    actionTimeout = setTimeout(() => {
-      generatedDice = rollDice();
-      
-      currentIndex = (currentIndex + 1) % room.players.length;
-      userSocket.emit("dice", generatedDice);
-      canRollDice = false;
- 
-      playTurn(); // Proceed to the next turn
-    }, rollingDiceAwaitTime * 2);
-
-    // Wait for player action
-    waitForPlayerAction(userSocket, currentPlayer.color).then((actionData) => {
-      // If player action is 'roll' and it's the current player's turn
-      if (
-        actionData.action === "roll" &&
-        actionData.color === currentPlayer.color && canRollDice
-      ) {
-        clearTimeout(actionTimeout);
-        generatedDice = rollDice();
-        currentIndex = (currentIndex + 1) % room.players.length;
-        userSocket.emit("dice", generatedDice);
-        canRollDice = false
-        playTurn(); // Proceed to the next turn
-      } else {
-        console.log("Not your turn or invalid action.");
-      }
-    });
+      // Emit the turn event for the current player
+      setTimeout(playTurn, 20000); // Start the game loop
   }
 
-  playTurn(); // Start the game loop
+  if (!room.turnProcessed) {
+      playTurn(); // Start the game loop
+  }
 }
 
 function rollDice() {
