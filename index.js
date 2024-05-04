@@ -75,32 +75,32 @@ io.on("connection", (socket) => {
   findGame(myId, levels, runningGames);
 
 
-  socket.on("player-action", (actionObj) => {
-    const { action, color, id } = actionObj;
+  // socket.on("player-action", (actionObj) => {
+  //   const { action, color, id } = actionObj;
 
-    let foundRoom = runningGames.get(id)
-    if (foundRoom) {
-      const turn = foundRoom.turn
-      console.log('turn: ', turn)
+  //   let foundRoom = runningGames.get(id)
+  //   if (foundRoom) {
+  //     const turn = foundRoom.turn
+  //     console.log('turn: ', turn)
 
-      if (action === "roll" && foundRoom && turn === "color") {
+  //     if (action === "roll" && foundRoom && turn === "color") {
         
-          const dice = rollDice();
-          const nextTurn = passTurn()
-          foundRoom.turn = nextTurn
-          console.log('foind', foundRoom)
-          runningGames.set(id, foundRoom)
-          io.to(id).emit("dice", dice); // Emit the dice roll result to the room
-          playGame(id, foundRoom)
-        } else {
-          // console.log("Invalid player or not player's turn.");
-        }
-    } else {
-      console.log('room not found')
-    }
+  //         const dice = rollDice();
+  //         const nextTurn = passTurn()
+  //         foundRoom.turn = nextTurn
+  //         console.log('foind', foundRoom)
+  //         runningGames.set(id, foundRoom)
+  //         io.to(id).emit("dice", dice); // Emit the dice roll result to the room
+  //         playGame(id, foundRoom)
+  //       } else {
+  //         // console.log("Invalid player or not player's turn.");
+  //       }
+  //   } else {
+  //     console.log('room not found')
+  //   }
     
 
-  });
+  // });
 
   socket.on("disconnect", () => {
     if (socket.user) {
@@ -293,7 +293,7 @@ function startGame(userId, room) {
       playerSocket.join(roomId)
     }
   })
-  console.log('game run')
+  // console.log('game run')
   playGame(roomId, targetRoom);
 
 }
@@ -349,34 +349,82 @@ function passTurn(turn) {
 
 
 
-
-
-
 function playGame(roomId, targetRoom) {
   const room = targetRoom;
+  let currentPlayerIndex = 0; // Index of the current player in the turn order array
+  const turnOrder = ["blue", "red", "green", "yellow"];
 
   io.to(roomId).emit("status", "starting game");
 
   function playTurn() {
-    const turn = room.turn; // Get the current player
-    const nextTurn = passTurn(turn)
-    io.to(roomId).emit("turn", turn); // Emit the turn event for the current player
+    const currentPlayerColor = turnOrder[currentPlayerIndex];
+  
+    // Wait for 10 seconds before emitting the turn event
+    setTimeout(() => {
+      io.to(roomId).emit("turn", currentPlayerColor); // Emit the current player's turn
+    }, 10000);
+  
+    const currentPlayer = room.players.find(player => player.color === currentPlayerColor);
+    if (!currentPlayer) {
+      console.error("Error: No player found for current color:", currentPlayerColor);
+      moveToNextPlayer();
+      return;
+    }
     
-    
-    setTimeout(()=> {
-      const dice = rollDice()
-      room.turn = nextTurn
-      runningGames.set(roomId, room)
-      io.to(roomId).emit("dice", dice); 
-    }, 10000)
-    
-    
-// Emit the turn event for the current player
-    setTimeout(playTurn, 10000); // Start the game loop
+    // Listen for player actions (roll) during their turn
+    if (currentPlayer.type === "real") {
+      const currentPlayerId = currentPlayer.id;
+      const currentUser = connectedUsers.get(currentPlayerId);
+      
+      if (!currentUser) {
+        console.error(`Error: No socket found for player with ID ${currentPlayerId}`);
+        moveToNextPlayer();
+        return;
+      }
+      
+      currentUser.on("player-action", handlePlayerAction);
+      
+      function handlePlayerAction(actionObj) {
+        // Check if it's the current player's turn and if the action is to roll the dice
+        if (
+          actionObj.color === currentPlayerColor &&
+          actionObj.action === "roll" &&
+          actionObj.id === roomId // Assuming actionObj contains the room ID
+        ) {
+          clearTimeout(rollTimeout);
+          const dice = rollDice();
+          io.to(roomId).emit("dice", dice); // Emit the rolled dice directly
+          moveToNextPlayer();
+        } else {
+          console.error(`NOT YOUR TURN`);
+        }
+      
+        // Remove the event listener after handling the action
+        currentUser.off("player-action", handlePlayerAction);
+      }
+      
+    }
+  
+    // Set a timeout for 30 seconds for the current player to roll the dice
+    let rollTimeout = setTimeout(() => {
+      const dice = rollDice();
+      io.to(roomId).emit("dice", dice); // Emit the rolled dice
+      moveToNextPlayer();
+    }, 20000);
+  
+    function moveToNextPlayer() {
+      // Move to the next player in turn order
+      currentPlayerIndex = (currentPlayerIndex + 1) % turnOrder.length;
+      playTurn(); // Start the next player's turn
+    }
   }
+  
 
-  playTurn(); // Start the game loop
+  // Start the game loop by initiating the first turn with "blue"
+  playTurn();
 }
+
+
 
 
 
