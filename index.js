@@ -84,7 +84,7 @@ io.on("connection", (socket) => {
   //     console.log('turn: ', turn)
 
   //     if (action === "roll" && foundRoom && turn === "color") {
-        
+
   //         const dice = rollDice();
   //         const nextTurn = passTurn()
   //         foundRoom.turn = nextTurn
@@ -98,7 +98,7 @@ io.on("connection", (socket) => {
   //   } else {
   //     console.log('room not found')
   //   }
-    
+
 
   // });
 
@@ -250,6 +250,7 @@ function startGame(userId, room) {
     if (player.includes("bot")) {
       const botName = `bot${botCounter++}`; // Increment bot counter for each bot encountered
       return {
+        id: uuid(),
         username: botName,
         type: "bot",
         color: colorMapping[index % colorMapping.length],
@@ -281,7 +282,8 @@ function startGame(userId, room) {
     players: generatedPlayersWithPieces,
     level,
     dice: 6,
-    turn: 'blue'
+    turn: 'blue',
+    rolled: false
   });
 
 
@@ -293,8 +295,9 @@ function startGame(userId, room) {
       playerSocket.join(roomId)
     }
   })
-  // console.log('game run')
-  playGame(roomId, targetRoom);
+  io.to(roomId).emit("status", "starting game");
+
+  playGame(roomId);
 
 }
 
@@ -331,102 +334,209 @@ function passTurn(turn) {
   if (turn === 'blue') {
     nextTurn = 'red'
   }
-  else if(turn === 'red') {
+  else if (turn === 'red') {
     nextTurn = 'green'
-    
+
   }
-  else if(turn === 'green') {
+  else if (turn === 'green') {
     nextTurn = 'yellow'
 
   }
-  else if(turn === 'yellow') {
+  else if (turn === 'yellow') {
     nextTurn = 'blue'
 
   }
   return nextTurn
 }
 
+function playGame(roomId) {
+  let rollTimeOut
+  clearTimeout(rollTimeOut)
+  const room = runningGames.get(roomId);
+  const turn = room.turn;
+  const currentPlayer = room.players.find((player) => player.color === turn);
+  const playerPieces = currentPlayer.pieces;
+  const nextTurn = passTurn(turn);
+  io.to(roomId).emit("turn", turn);
 
+  if (currentPlayer.type === "real") {
 
+    const playerSocket = connectedUsers.get(currentPlayer.id);
 
-function playGame(roomId, targetRoom) {
-  const room = targetRoom;
-  let currentPlayerIndex = 0; // Index of the current player in the turn order array
-  const turnOrder = ["blue", "red", "green", "yellow"];
+    const rollEventListener = (actionObj) => {
+      if (turn === actionObj.color && actionObj.action === "roll") {
+        playerSocket.off("roll-action", rollEventListener);
+        clearTimeout(rollTimeOut);
+        handleRollAction(roomId, room, playerSocket, currentPlayer, playerPieces, nextTurn);
 
-  io.to(roomId).emit("status", "starting game");
-
-  function playTurn() {
-    const currentPlayerColor = turnOrder[currentPlayerIndex];
-  
-    // Wait for 10 seconds before emitting the turn event
-    setTimeout(() => {
-      io.to(roomId).emit("turn", currentPlayerColor); // Emit the current player's turn
-    }, 10000);
-  
-    const currentPlayer = room.players.find(player => player.color === currentPlayerColor);
-    if (!currentPlayer) {
-      console.error("Error: No player found for current color:", currentPlayerColor);
-      moveToNextPlayer();
-      return;
-    }
-    
-    // Listen for player actions (roll) during their turn
-    if (currentPlayer.type === "real") {
-      const currentPlayerId = currentPlayer.id;
-      const currentUser = connectedUsers.get(currentPlayerId);
-      
-      if (!currentUser) {
-        console.error(`Error: No socket found for player with ID ${currentPlayerId}`);
-        moveToNextPlayer();
-        return;
       }
-      
-      currentUser.on("player-action", handlePlayerAction);
-      
-      function handlePlayerAction(actionObj) {
-        // Check if it's the current player's turn and if the action is to roll the dice
-        if (
-          actionObj.color === currentPlayerColor &&
-          actionObj.action === "roll" &&
-          actionObj.id === roomId // Assuming actionObj contains the room ID
-        ) {
-          clearTimeout(rollTimeout);
-          const dice = rollDice();
-          io.to(roomId).emit("dice", dice); // Emit the rolled dice directly
-          moveToNextPlayer();
-        } else {
-          console.error(`NOT YOUR TURN`);
-        }
-      
-        // Remove the event listener after handling the action
-        currentUser.off("player-action", handlePlayerAction);
-      }
-      
-    }
-  
-    // Set a timeout for 30 seconds for the current player to roll the dice
-    let rollTimeout = setTimeout(() => {
-      const dice = rollDice();
-      io.to(roomId).emit("dice", dice); // Emit the rolled dice
-      moveToNextPlayer();
-    }, 20000);
-  
-    function moveToNextPlayer() {
-      // Move to the next player in turn order
-      currentPlayerIndex = (currentPlayerIndex + 1) % turnOrder.length;
-      playTurn(); // Start the next player's turn
-    }
+    };
+    playerSocket.on('roll-action', rollEventListener);
+    rollTimeOut = setTimeout(() => {
+      playerSocket.off("roll-action", rollEventListener);
+      handleRollAction(roomId, room, playerSocket, currentPlayer, playerPieces, nextTurn);
+   
+
+    }, rollingDiceAwaitTime);
+
+  } else if (currentPlayer.type === "bot") {
+    handleBotTurn(roomId, room, nextTurn);
   }
-  
-
-  // Start the game loop by initiating the first turn with "blue"
-  playTurn();
 }
 
 
 
 
+function handleRollAction(roomId, room, playerSocket, currentPlayer, playerPieces, nextTurn) {
+  const dice = rollDice();
+  room.dice = dice;
+  runningGames.set(roomId, room);
+  io.to(roomId).emit("dice", dice);
+  let moveTimeOut
+
+
+  const canMove = canPlay(playerPieces, dice);
+  if (canMove) {
+    const moveEventListener = (actionObj) => {
+      if (actionObj.action === "move") {
+        const targetPawn = actionObj.piece;
+        if (canMovePiece(playerPieces, targetPawn, dice)) {
+          playerSocket.off("move-action", moveEventListener);
+          clearTimeout(moveTimeOut)
+          const updatedPawns = changePiecePosition(playerPieces, targetPawn, dice);
+          // console.log('updated pawns', updatedPawns);
+          if (updatedPawns !== null) {
+            const updatedPlayer = { ...currentPlayer, pieces: updatedPawns };
+            room.players = room.players.map((player) =>
+              player.color === currentPlayer.color ? updatedPlayer : player
+            );
+            if (dice !== 6) {
+              room.turn = nextTurn;
+            }
+            runningGames.set(roomId, room);
+            playGame(roomId);
+          }
+        }
+      }
+    };
+    playerSocket.on('move-action', moveEventListener);
+
+    moveTimeOut = setTimeout(() => {
+      playerSocket.off('move-action', moveEventListener);
+      const selectedPawn = autoSelectPiece(playerPieces)
+      const updatedPawns = changePiecePosition(playerPieces, selectedPawn, dice);
+      console.log('updated pawns', updatedPawns);
+      if (updatedPawns !== null) {
+        const updatedPlayer = { ...currentPlayer, pieces: updatedPawns };
+        room.players = room.players.map((player) =>
+          player.color === currentPlayer.color ? updatedPlayer : player
+        );
+        if (dice !== 6) {
+          room.turn = nextTurn;
+        }
+        runningGames.set(roomId, room);
+        playGame(roomId);
+      }
+    }, movePieceAwaitingTime);
+
+
+  } else {
+    room.turn = nextTurn;
+    runningGames.set(roomId, room);
+    playGame(roomId);
+  }
+
+
+
+
+
+}
+
+
+function handleBotTurn(roomId, room, nextTurn) {
+  const dice = rollDice();
+  room.dice = dice;
+  runningGames.set(roomId, room);
+  setTimeout(() => {
+    io.to(roomId).emit("dice", dice);
+    room.turn = nextTurn;
+    runningGames.set(roomId, room);
+    playGame(roomId);
+  }, 1000);
+}
+
+
+
+function canPlay(pieces, number) {
+  // Check if any piece state is unlocked
+  const unlockedPiece = pieces.find(piece => piece.state !== 'locked');
+
+  // If the number is 6 or there is an unlocked piece, return 'can play'
+  if (number === 6 || unlockedPiece) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+function changePiecePosition(pieces, pieceName, number) {
+  // Find the piece with the given name
+  const pieceIndex = pieces.findIndex(piece => piece.name === pieceName);
+
+  // If the piece is found
+  if (pieceIndex !== -1) {
+    const piece = pieces[pieceIndex];
+    if (number === 6 && piece.state === 'locked') {
+      // If number is 6 and piece is locked, change state to unlocked and position to 0
+      piece.state = 'unlocked';
+      piece.position = 0;
+    } else if (piece.state === 'unlocked') {
+      // If piece is unlocked, increment position
+      piece.position += number;
+    }
+    return pieces;
+  } else {
+    // If the piece is not found, return null or throw an error as per your requirement
+    return null;
+  }
+}
+
+
+function canMovePiece(pieces, pieceName, number) {
+  // Find the piece with the given name
+  const piece = pieces.find(piece => piece.name === pieceName);
+
+  // If the piece is found
+  if (piece) {
+    // Check if the piece state is unlocked or if the number is 6
+    if (piece.state !== 'locked' || number === 6) {
+      return true; // Piece can play
+    }
+  }
+
+  // If the piece is not found or cannot play, return false
+  return false;
+}
+
+
+function autoSelectPiece(playerPieces) {
+  // Check if any piece state is unlocked
+  const unlockedPiece = playerPieces.find(piece => piece.state !== 'locked');
+
+  // If an unlocked piece is found, return the name of the piece with the highest position
+  if (unlockedPiece) {
+    let highestPositionPiece = { position: -1 }; // Initialize with a lowest position
+    playerPieces.forEach(piece => {
+      if (piece.position > highestPositionPiece.position) {
+        highestPositionPiece = piece;
+      }
+    });
+    return highestPositionPiece.name;
+  }
+
+  // If all pieces are locked, return the name of the first piece
+  return playerPieces[0].name;
+}
 
 
 
