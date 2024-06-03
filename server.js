@@ -1,8 +1,6 @@
-import express from 'express';
-import http from 'http';
-import { WebSocketServer } from 'ws';
 import cors from "cors";
 import dotenv from "dotenv";
+import express from "express";
 import { createServer } from "http";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
@@ -12,11 +10,18 @@ import { MongoDbConnection } from "./config/conn.js";
 import authRoutes from "./routes/auth.js";
 
 const app = express();
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
-app.use(cors());
-app.use(express.json());
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: "*", // Adjust according to your frontend's URL to restrict origins
+    methods: ["GET", "POST"],
+  },
+});
 
+app.use(cors());
+app.use(express.json({ limit: "512mb" }));
+
+// app.use(cookieParser());
 app.use(express.urlencoded({ extended: false }));
 dotenv.config();
 mongoose.set("strictQuery", false);
@@ -39,44 +44,34 @@ const levels = {
 const botAwaitTime = 5000;
 const rollingDiceAwaitTime = 5000;
 const movePieceAwaitingTime = 5000;
-const basePath = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56]
-const bluePath = ['6B', '6C', '6D', '6E', '6F', '5G', '4G', '3G', '2G', '1G', '0G', '0H', '0I', '1I', '2I', '3I', '4I', '5I', '6J', '6K', '6L', '6M', '6N', '6O', '7O', '8O', '8N', '8M', '8L', '8K', '8J', '9I', '10I', '11I', '12I', '13I', '14I', '14H', '14G', '13G', '12G', '11G', '10G', '9G', '8F', '8E', '8D', '8C', '8B', '8A', '7A', '7B', '7C', '7D', '7E', '7F', '7G']
-const redPath = ['1I', '2I', '3I', '4I', '5I', '6J', '6K', '6L', '6M', '6N', '6O', '7O', '8O', '8N', '8M', '8L', '8K', '8J', '9I', '10I', '11I', '12I', '13I', '14I', '14H', '14G', '13G', '12G', '11G', '10G', '9G', '8F', '8E', '8D', '8C', '8B', '8A', '7A', '6A', '6B', '6C', '6D', '6E', '6F', '5G', '4G', '3G', '2G', '1G', '0G', '0H', '1H', '2H', '3H', '4H', '5H', '6H']
-const greenPath = ['8N', '8M', '8L', '8K', '8J', '9I', '10I', '11I', '12I', '13I', '14I', '14H', '14G', '13G', '12G', '11G', '10G', '9G', '8F', '8E', '8D', '8C', '8B', '8A', '7A', '6A', '6B', '6C', '6D', '6E', '6F', '5G', '4G', '3G', '2G', '1G', '0G', '0H', '0I', '1I', '2I', '3I', '4I', '5I', '6J', '6K', '6L', '6M', '6N', '6O', '7O', '7N', '7M', '7L', '7K', '7J', '7I']
-const yellowPath = ['13G', '12G', '11G', '10G', '9G', '8F', '8E', '8D', '8C', '8B', '8A', '7A', '6A', '6B', '6C', '6D', '6E', '6F', '5G', '4G', '3G', '2G', '1G', '0G', '0H', '0I', '1I', '2I', '3I', '4I', '5I', '6J', '6K', '6L', '6M', '6N', '6O', '7O', '8O', '8N', '8M', '8L', '8K', '8J', '9I', '10I', '11I', '12I', '13I', '14I', '14H', '13H', '12H', '11H', '10H', '9H', '8H']
+const basePath    =  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56]
+const bluePath    =  ['6B', '6C', '6D', '6E', '6F', '5G', '4G', '3G', '2G', '1G', '0G', '0H', '0I', '1I', '2I', '3I', '4I', '5I', '6J', '6K', '6L', '6M', '6N', '6O', '7O', '8O', '8N', '8M', '8L', '8K', '8J', '9I', '10I', '11I', '12I', '13I', '14I', '14H', '14G', '13G', '12G', '11G', '10G', '9G', '8F', '8E', '8D', '8C', '8B', '8A', '7A', '7B', '7C', '7D', '7E', '7F', '7G' ]
+const redPath     =  ['1I', '2I', '3I', '4I', '5I', '6J', '6K', '6L', '6M', '6N', '6O', '7O', '8O', '8N', '8M', '8L', '8K', '8J', '9I', '10I', '11I', '12I', '13I', '14I', '14H', '14G', '13G', '12G', '11G', '10G', '9G', '8F', '8E', '8D', '8C', '8B', '8A', '7A', '6A', '6B','6C', '6D', '6E', '6F', '5G', '4G', '3G', '2G', '1G', '0G', '0H', '1H', '2H', '3H', '4H', '5H', '6H'  ]
+const greenPath   =  ['8N', '8M', '8L', '8K', '8J', '9I', '10I', '11I', '12I', '13I', '14I', '14H', '14G', '13G', '12G', '11G', '10G', '9G', '8F', '8E', '8D', '8C', '8B', '8A', '7A', '6A', '6B','6C', '6D', '6E', '6F', '5G', '4G', '3G', '2G', '1G', '0G', '0H','0I', '1I', '2I', '3I', '4I', '5I', '6J', '6K', '6L', '6M', '6N', '6O', '7O', '7N', '7M', '7L', '7K', '7J', '7I' ]
+const yellowPath  =  ['13G', '12G', '11G', '10G', '9G', '8F', '8E', '8D', '8C', '8B', '8A', '7A', '6A', '6B','6C', '6D', '6E', '6F', '5G', '4G', '3G', '2G', '1G', '0G', '0H','0I', '1I', '2I', '3I', '4I', '5I', '6J', '6K', '6L', '6M', '6N', '6O', '7O', '8O', '8N', '8M', '8L', '8K', '8J', '9I', '10I', '11I', '12I', '13I', '14I', '14H', '13H', '12H', '11H', '10H', '9H', '8H' ]
 
 // Color and type mappings
 const colorMapping = ["blue", "red", "green", "yellow"];
-
-
-wss.on('connection', (ws, req) => {
-
-  // const accessToken = req.headers.authorization;
-  const accessToken = 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MzAwMWMyYWI4MTQ0ZTk4YjRmZjJiOCIsInJvbGUiOiJjbGllbnQiLCJ1c2VybmFtZSI6ImJvJCQiLCJiYWxhbmNlIjowLCJsZXZlbCI6ImJyb256ZSIsImlhdCI6MTcxNzQ1MTY3OCwiZXhwIjoxNzE3NDYyNDc4fQ.velBtByx2cSNZqZTkxtp1ZJOjUCcSySavfJ2G8ro51M'
+// Middleware function to authenticate socket connections
+io.use((socket, next) => {
+  const accessToken = socket.handshake.headers.authorization;
 
   if (accessToken) {
-
     const token = accessToken.split(" ")[1]; // Split "Bearer token" and take the token part
     jwt.verify(token, process.env.JWT_SEC, (err, decoded) => {
-      if (err) {
-        // Authentication error
-        ws.close(1008, 'Authentication error');
-        return;
-      }
-      // Authentication successful, attach user information to the WebSocket instance
-      ws.user = decoded;
-      connectedUsers.set(decoded.id, ws);
-
+      if (err) return next(new Error("Authentication error"));
+      socket.user = decoded;
+      connectedUsers.set(decoded.id, socket);
+      next();
     });
   } else {
-    // No access token provided
-    ws.close(1008, 'Authentication error');
-    return;
+    next(new Error("Authentication error"));
   }
+});
 
-  const myId = ws.user?.id.toString();
+io.on("connection", (socket) => {
+  const myId = socket.user.id.toString();
   console.log('new connection')
-
 
   setupUserLevel(myId, connectedUsers, levels, runningGames);
 
@@ -84,6 +79,15 @@ wss.on('connection', (ws, req) => {
 
 
 
+
+
+  socket.on("disconnect", () => {
+    if (socket.user) {
+      const { id, level } = socket.user;
+      removeLevelPlayer(id, level);
+      connectedUsers.delete(id);
+    }
+  });
 });
 
 
@@ -186,7 +190,7 @@ function findGame(userId, levels, runningGames) {
 
 function launchGame(userId, players, level, levels, runningGames) {
   const roomId = uuidv4();
-  // console.log('roomId', roomId)
+  console.log('roomId', roomId)
   const gamePlayers = players.slice(0, 4); // Take the first four players
 
   // Remove these players from the level array
@@ -229,7 +233,6 @@ function startGame(userId, room) {
         username: botName,
         type: "bot",
         color: colorMapping[index % colorMapping.length],
-        roomId: roomId
       }; // Assign colors based on the color mapping
     } else {
       const connectedUser = connectedUsers.get(player);
@@ -238,7 +241,6 @@ function startGame(userId, room) {
         username: connectedUser.user.username,
         type: "real",
         color: colorMapping[index % colorMapping.length],
-        roomId: roomId
       };
     }
   });
@@ -267,22 +269,11 @@ function startGame(userId, room) {
   // userSocket.emit("game", targetRoom);
   targetRoom.players.forEach((player) => {
     if (player.type === 'real') {
-      const playerSocket = connectedUsers.get(player.id);
-      if (playerSocket) {
-        playerSocket.user.roomId = roomId;
-        connectedUsers.set(player.id, playerSocket);
-        playerSocket.send(JSON.stringify({ event: "my-color", message: player.color }));
-        playerSocket.send(JSON.stringify({ event: "status", message: "starting game" }));
-      }
+      const playerSocket = connectedUsers.get(player.id)
+      playerSocket.join(roomId)
     }
-  });
-
-
-
-
-  // Emit messages to real players in the room
-
-  // io.to(roomId).emit("status", "starting game");
+  })
+  io.to(roomId).emit("status", "starting game");
 
   playGame(roomId);
 
@@ -337,242 +328,138 @@ function passTurn(turn) {
 }
 
 function playGame(roomId) {
-  let rollTimeOut = null; // Initialize rollTimeOut to null
+  let rollTimeOut
+  clearTimeout(rollTimeOut)
 
   const room = runningGames.get(roomId);
   const turn = room.turn;
-  const allPlayers = room.players;
   const currentPlayer = room.players.find((player) => player.color === turn);
   const otherPlayers = room.players.filter((player) => player.color !== turn);
   const playerPieces = currentPlayer.pieces;
   const nextTurn = passTurn(turn);
+  io.to(roomId).emit("turn", turn);
 
-  const message = { event: "turn", message: turn };
-  console.log("turn : ", turn)
-  emitToRoomPlayers(roomId, message);
+  if (currentPlayer.type === "real")
+  {
 
-  if (currentPlayer.type === "real") {
     const playerSocket = connectedUsers.get(currentPlayer.id);
 
-    // Define the roll event listener function
-    const rollEventListener = (event) => {
-      try {
-        const actionObj = JSON.parse(event.data);
-        console.log(actionObj)
-        if (turn === actionObj.message && actionObj.event === "roll") {
-          // Remove the event listener
-          playerSocket.removeEventListener("message", rollEventListener);
-          clearTimeout(rollTimeOut);
-          handleRollAction(roomId, room, playerSocket, currentPlayer, playerPieces, nextTurn, otherPlayers);
-        }
-      } catch (error) {
-        console.error('Error processing roll action:', error);
+    const rollEventListener = (actionObj) => {
+      if (turn === actionObj.color && actionObj.action === "roll") {
+        playerSocket.off("roll-action", rollEventListener);
+        clearTimeout(rollTimeOut);
+        handleRollAction(roomId, room, playerSocket, currentPlayer, playerPieces, nextTurn, otherPlayers);
+
       }
     };
-
-    // Add the event listener for roll actions
-    playerSocket.addEventListener("message", rollEventListener);
-
-    // Set the timeout to remove the event listener if no action is received
+    playerSocket.on('roll-action', rollEventListener);
     rollTimeOut = setTimeout(() => {
-      // Remove the event listener
-      playerSocket.removeEventListener("message", rollEventListener);
+      playerSocket.off("roll-action", rollEventListener);
       handleRollAction(roomId, room, playerSocket, currentPlayer, playerPieces, nextTurn, otherPlayers);
+
+
     }, rollingDiceAwaitTime);
 
-
-  } else if (currentPlayer.type === "bot") {
+  } 
+  else if (currentPlayer.type === "bot") 
+  {
     handleBotTurn(roomId, room, nextTurn);
   }
 }
 
 
-function emitToRoomPlayers(roomId, message) {
-  const room = runningGames.get(roomId);
-  if (!room) {
-    console.error(`Room with ID ${roomId} not found.`);
-    return;
-  }
-
-  room.players.forEach((player) => {
-    if (player.type === 'real') {
-      const playerSocket = connectedUsers.get(player.id);
-      if (playerSocket) {
-        playerSocket.send(JSON.stringify(message));
-      }
-    }
-  });
-}
-
-
-
-// function handleRollAction(roomId, room, playerSocket, currentPlayer, playerPieces, nextTurn, otherPlayers) {
-//   let moveTimeOut;
-//   // const dice = rollDice();
-//   const dice = 6;
-//   room.dice = dice;
-//   runningGames.set(roomId, room);
-//   const message = { event: "dice", message: dice };
-//   console.log('dice', dice)
-//   emitToRoomPlayers(roomId, message);
-
-//   const canMove = canPlay(playerPieces, dice);
-
-//   if (canMove) {
-//     const moveEventListener = (event) => {
-//       try {
-//         const actionObj = JSON.parse(event.data);
-//         console.log(actionObj)
-//         if (actionObj.event === "move") {
-//           const targetPawn = actionObj.piece;
-//           if (canMovePiece(playerPieces, targetPawn, dice)) {
-//             playerSocket.removeEventListener("message", moveEventListener);
-//             clearTimeout(moveTimeOut);
-//             const { pieces, updatedOthers, kill } = changePiecePosition(playerPieces, targetPawn, dice, otherPlayers);
-//             if (pieces !== null) {
-//               const updatedPlayer = { ...currentPlayer, pieces: pieces };
-//               const mergedPlayers = [updatedPlayer, ...updatedOthers];
-//               console.log(mergedPlayers)
-//               room.players = mergedPlayers;
-//               if (dice !== 6 || !kill) {
-//                 room.turn = nextTurn;
-//               }
-//               runningGames.set(roomId, room);
-//               playGame(roomId);
-//             }
-//           }
-//         }
-//       } catch (error) {
-//         console.error('Error processing move action:', error);
-//       }
-//     };
-
-//     playerSocket.addEventListener('message', moveEventListener);
-
-//     moveTimeOut = setTimeout(() => {
-//       playerSocket.removeEventListener('message', moveEventListener);
-//       const selectedPawn = autoSelectPiece(playerPieces);
-//       const { pieces, updatedOthers, kill } = changePiecePosition(playerPieces, selectedPawn, dice, otherPlayers);
-//       if (pieces !== null) {
-//         const updatedPlayer = { ...currentPlayer, pieces: pieces };
-//         const mergedPlayers = [updatedPlayer, ...updatedOthers];
-//         room.players = mergedPlayers;
-//         // mergedPlayers.forEach((player) => {
-//         //   player.pieces.forEach((piece) => console.log(piece));
-//         // });
-//         // console.log('\n');
-//         if (dice !== 6 || !kill) {
-//           room.turn = nextTurn;
-//         }
-//         runningGames.set(roomId, room);
-//         playGame(roomId);
-//       }
-//     }, movePieceAwaitingTime);
-//   } else {
-//     room.turn = nextTurn;
-//     runningGames.set(roomId, room);
-//     setTimeout(() => {
-
-//       playGame(roomId);
-//     }, 2500);
-//   }
-// }
-
 function handleRollAction(roomId, room, playerSocket, currentPlayer, playerPieces, nextTurn, otherPlayers) {
-  let moveTimeOut;
-  // Simulate dice roll or use a function to get dice value.
-  const dice = rollDice(); // Assuming rollDice is a function to roll the dice.
-  // const dice = 6 // Assuming rollDice is a function to roll the dice.
+  const dice = rollDice();
   room.dice = dice;
   runningGames.set(roomId, room);
-  const message = { event: "dice", message: dice };
-  // console.log('dice', dice)
-  emitToRoomPlayers(roomId, message);
+  io.to(roomId).emit("dice", dice);
+  let moveTimeOut
+
 
   const canMove = canPlay(playerPieces, dice);
   if (canMove) {
-    const moveEventListener = (event) => {
-      try {
-        const actionObj = JSON.parse(event.data);
-        console.log(actionObj)
-        if (actionObj.event === "move") {
-          const targetPawn = actionObj.piece;
-          if (canMovePiece(playerPieces, targetPawn, dice)) {
-            playerSocket.removeEventListener("message", moveEventListener);
-            clearTimeout(moveTimeOut);
-            const { pieces, updatedOthers, kill, newPosition } = changePiecePosition(playerPieces, targetPawn, dice, otherPlayers);
-            if (pieces !== null) {
-              const updatedPlayer = { ...currentPlayer, pieces: pieces };
-              const mergedPlayers = [updatedPlayer, ...updatedOthers];
-              console.log(mergedPlayers.map(p =>
-                p.pieces
-              ))
-              room.players = mergedPlayers;
-              if (dice !== 6 || kill) { // Continue the turn if dice is 6 unless there is a kill
-                room.turn = nextTurn;
-              }
-              runningGames.set(roomId, room);
-              const message = { event: "map", message: JSON.stringify(mergedPlayers.map(p =>
-                p.pieces
-              )) };
-              emitToRoomPlayers(roomId, message);
-              setTimeout(() => {
-                playGame(roomId);
-
-              }, 2000);
+    const moveEventListener = (actionObj) => {
+      if (actionObj.action === "move") {
+        const targetPawn = actionObj.piece;
+        if (canMovePiece(playerPieces, targetPawn, dice)) {
+          playerSocket.off("move-action", moveEventListener);
+          clearTimeout(moveTimeOut)
+          // const updatedPawns = changePiecePosition(playerPieces, targetPawn, dice, otherPlayers);
+          const {pieces, updatedOthers, kill} = changePiecePosition(playerPieces, targetPawn, dice, otherPlayers);
+          // console.log('updated pawns', updatedPawns);
+          if (pieces !== null) {
+            const updatedPlayer = { ...currentPlayer, pieces: pieces };
+            const mergedPlayers = [
+              updatedPlayer,
+              ...updatedOthers
+            ];
+            
+            // Set the merged players array in the room
+            room.players = mergedPlayers;
+    
+            if (dice !== 6 || !kill) {
+              room.turn = nextTurn;
             }
+            runningGames.set(roomId, room);
+            playGame(roomId);
           }
         }
-      } catch (error) {
-        console.error('Error processing move action:', error);
       }
     };
-    playerSocket.addEventListener('message', moveEventListener);
+    playerSocket.on('move-action', moveEventListener);
 
     moveTimeOut = setTimeout(() => {
-      playerSocket.removeEventListener('message', moveEventListener);
-      const selectedPawn = autoSelectPiece(playerPieces);
-      const { pieces, updatedOthers, kill } = changePiecePosition(playerPieces, selectedPawn, dice, otherPlayers);
-      if (pieces !== null) {
-        const updatedPlayer = { ...currentPlayer, pieces: pieces };
-        const mergedPlayers = [updatedPlayer, ...updatedOthers];
-        room.players = mergedPlayers;
-        if (dice !== 6 || kill) {
-          room.turn = nextTurn;
-        }
-        runningGames.set(roomId, room);
-        playGame(roomId);
+      playerSocket.off('move-action', moveEventListener);
+      const selectedPawn = autoSelectPiece(playerPieces)
+      const {pieces, updatedOthers, kill} = changePiecePosition(playerPieces, selectedPawn, dice, otherPlayers);
+      // console.log('updatedOthers::::', updatedOthers)
+          // console.log('updated pawns', updatedPawns);
+          if (pieces !== null) {
+            const updatedPlayer = { ...currentPlayer, pieces: pieces };
+            const mergedPlayers = [
+              updatedPlayer,
+              ...updatedOthers
+            ];
+            
+            // Set the merged players array in the room
+            room.players = mergedPlayers;
+            mergedPlayers.map((player) => {
+              player.pieces.map((piece) => console.log(piece))
+            })
+            console.log('\n')
+    
+            if (dice !== 6 || !kill) {
+              room.turn = nextTurn;
+            }
+            runningGames.set(roomId, room);
+            playGame(roomId);
       }
     }, movePieceAwaitingTime);
 
+
   } else {
-    // if (dice === 6) { // If the dice is 6 but no move can be made, allow another chance
-    //   playGame(roomId);
-    // } else {
     room.turn = nextTurn;
     runningGames.set(roomId, room);
-    setTimeout(() => {
-      playGame(roomId);
-    }, 2500);
-    // }
+    playGame(roomId);
   }
+
+
+
+
+
 }
 
 
-
 function handleBotTurn(roomId, room, nextTurn) {
+  const dice = rollDice();
+  room.dice = dice;
+  runningGames.set(roomId, room);
   setTimeout(() => {
-    const dice = rollDice();
-    room.dice = dice;
-    runningGames.set(roomId, room);
-    const message = { event: "dice", message: dice };
-    emitToRoomPlayers(roomId, message);
+    io.to(roomId).emit("dice", dice);
     room.turn = nextTurn;
     runningGames.set(roomId, room);
-  }, 2000);
-  setTimeout(() => {
     playGame(roomId);
-  }, 4000);
+  }, 1000);
 }
 
 
@@ -592,11 +479,10 @@ function canPlay(pieces, number) {
 function changePiecePosition(pieces, pieceName, number, otherPlayers) {
   let kill = false
   let updatedOthers = otherPlayers
-  let newPosition
   // Find the piece with the given name
   const pieceIndex = pieces.findIndex(piece => piece.name === pieceName);
   const color = pieceName.substring(0, pieceName.length - 1).toLowerCase();
-
+  
 
   // If the piece is found
   if (pieceIndex !== -1) {
@@ -605,11 +491,9 @@ function changePiecePosition(pieces, pieceName, number, otherPlayers) {
       // If number is 6 and piece is locked, change state to unlocked and position to 0
       piece.state = 'unlocked';
       piece.position = 0;
-      newPosition = 0
     } else if (piece.state === 'unlocked') {
       // If piece is unlocked, increment position
       piece.position += number;
-      newPosition = piece.position
       const newPosIndex = piece.position
       let positionName
       const path = getPathByColor(color);
@@ -618,7 +502,7 @@ function changePiecePosition(pieces, pieceName, number, otherPlayers) {
         const color = player.color
         const otherPlayerPath = getPathByColor(color);
         player.pieces.forEach((piece) => {
-
+          
           if (piece.state === 'unlocked') {
             const piecePosition = piece.position
             const piecePositionName = otherPlayerPath[piecePosition]
@@ -627,18 +511,18 @@ function changePiecePosition(pieces, pieceName, number, otherPlayers) {
               piece.position = null
               kill = true
             }
-
+      
           }
-
+          
         })
       })
 
 
-
-
+ 
+      
 
     }
-    return { pieces, updatedOthers, kill, newPosition };
+    return {pieces, updatedOthers, kill};
   } else {
     // If the piece is not found, return null or throw an error as per your requirement
     return null;
@@ -718,9 +602,8 @@ function rollDiceForPlayer() {
 // Start the server
 const PORT = process.env.PORT || 9000;
 
-
-
-server.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   MongoDbConnection();
   console.log("Server started on Port", process.env.PORT);
+  checkAndClearStates();
 });
